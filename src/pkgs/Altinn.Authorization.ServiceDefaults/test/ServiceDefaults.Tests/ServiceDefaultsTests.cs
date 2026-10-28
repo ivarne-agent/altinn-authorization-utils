@@ -259,6 +259,84 @@ public class ServiceDefaultsTests
         app.Activities.ShouldHaveSingleItem();
     }
 
+    [Fact]
+    public async Task OpenTelemetry_Exporters_OtlpOnly_ExportsOverOtlp()
+    {
+        using var collector = FakeTelemetryCollector.Start();
+        await using var app = await CreateApp([
+            .. OtlpConfig(collector),
+        ]);
+
+        await app.Poke(parent: default /* root activity */);
+
+        await WaitForExports(app, collector, [OtlpTracesPath]);
+        collector.Paths.ShouldNotContain(AzureMonitorTrackPath);
+    }
+
+    [Fact]
+    public async Task OpenTelemetry_Exporters_AzureMonitorOnly_ExportsToAzureMonitor()
+    {
+        using var collector = FakeTelemetryCollector.Start();
+        await using var app = await CreateApp([
+            .. AzureMonitorConfig(collector),
+        ]);
+
+        await app.Poke(parent: default /* root activity */);
+
+        await WaitForExports(app, collector, [AzureMonitorTrackPath]);
+        collector.Paths.ShouldNotContain(OtlpTracesPath);
+    }
+
+    [Fact]
+    public async Task OpenTelemetry_Exporters_OtlpAndAzureMonitor_ExportToBoth()
+    {
+        // Also fails if Azure Monitor's own sampler (rate limited by default) replaces the one from
+        // Altinn:Telemetry:Sampling, as the rate limiter drops the first trace.
+        using var collector = FakeTelemetryCollector.Start();
+        await using var app = await CreateApp([
+            .. OtlpConfig(collector),
+            .. AzureMonitorConfig(collector),
+        ]);
+
+        await app.Poke(parent: default /* root activity */);
+
+        await WaitForExports(app, collector, [OtlpTracesPath, AzureMonitorTrackPath]);
+    }
+
+    private const string OtlpTracesPath = "/v1/traces";
+    private const string AzureMonitorTrackPath = "/v2.1/track";
+
+    private static IEnumerable<KeyValuePair<string, string>> OtlpConfig(FakeTelemetryCollector collector)
+    {
+        yield return new("OTEL_EXPORTER_OTLP_ENDPOINT", collector.Endpoint);
+        yield return new("OTEL_EXPORTER_OTLP_PROTOCOL", "http/protobuf");
+    }
+
+    private static IEnumerable<KeyValuePair<string, string>> AzureMonitorConfig(FakeTelemetryCollector collector)
+    {
+        yield return new(
+            "ConnectionStrings:ApplicationInsights",
+            $"InstrumentationKey=00000000-0000-0000-0000-000000000000;IngestionEndpoint={collector.Endpoint}/;LiveEndpoint={collector.Endpoint}/");
+    }
+
+    private static async Task WaitForExports(IServiceProvider services, FakeTelemetryCollector collector, IReadOnlyList<string> paths)
+    {
+        var tracerProvider = services.GetRequiredService<TracerProvider>();
+        var stopwatch = Stopwatch.StartNew();
+        while (stopwatch.Elapsed < TimeSpan.FromSeconds(10))
+        {
+            tracerProvider.ForceFlush();
+            if (paths.All(collector.Paths.Contains))
+            {
+                return;
+            }
+
+            await Task.Delay(100);
+        }
+
+        paths.ShouldBeSubsetOf(collector.Paths);
+    }
+
     private static ActivityContext CreateActivityContext(bool remote, bool sampled)
         => new(
             traceId: ActivityTraceId.CreateRandom(),

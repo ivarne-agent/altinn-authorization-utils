@@ -468,7 +468,8 @@ public static class AltinnServiceDefaultsExtensions
             builder.Services.ConfigureOpenTelemetryMeterProvider(metrics => metrics.AddOtlpExporter());
             builder.Services.ConfigureOpenTelemetryTracerProvider(tracing => tracing.AddOtlpExporter());
         }
-        else if (options.EnabledServices.ApplicationInsights)
+
+        if (options.EnabledServices.ApplicationInsights)
         {
             builder.AddApplicationInsights(logger);
         }
