@@ -28,6 +28,7 @@ using Microsoft.Extensions.Options;
 using OpenTelemetry;
 using OpenTelemetry.Logs;
 using OpenTelemetry.Metrics;
+using OpenTelemetry.Resources;
 using OpenTelemetry.Trace;
 
 namespace Microsoft.Extensions.Hosting;
@@ -391,7 +392,7 @@ public static class AltinnServiceDefaultsExtensions
         builder.Services.AddOpenTelemetry()
             .ConfigureResource(resource =>
             {
-                resource.AddDetector(services => services.GetRequiredService<AltinnServiceResourceDetector>());
+                resource.AddAltinnServiceResource();
             })
             .WithLogging(
                 configureBuilder: null,
@@ -450,12 +451,19 @@ public static class AltinnServiceDefaultsExtensions
                 })
                 .ConfigureResource(resource =>
                 {
-                    resource.AddDetector(services => services.GetRequiredService<AltinnServiceResourceDetector>());
+                    resource.AddAltinnServiceResource();
                 });
         });
 
         return builder;
     }
+
+    private static ResourceBuilder AddAltinnServiceResource(this ResourceBuilder resource)
+        // The environment variable detector goes last, so that OTEL_SERVICE_NAME and OTEL_RESOURCE_ATTRIBUTES
+        // override the attributes set by AltinnServiceResourceDetector (such as service.name).
+        => resource
+            .AddDetector(services => services.GetRequiredService<AltinnServiceResourceDetector>())
+            .AddEnvironmentVariableDetector();
 
     private static IHostApplicationBuilder AddOpenTelemetryExporters(this IHostApplicationBuilder builder, AltinnServiceDefaultOptions options, AltinnPreStartLogger logger)
     {

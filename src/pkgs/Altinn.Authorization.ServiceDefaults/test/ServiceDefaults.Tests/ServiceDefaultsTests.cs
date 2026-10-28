@@ -4,6 +4,10 @@ using Microsoft.Extensions.Configuration;
 using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.Hosting;
 using Microsoft.Extensions.Options;
+using OpenTelemetry;
+using OpenTelemetry.Logs;
+using OpenTelemetry.Metrics;
+using OpenTelemetry.Resources;
 using OpenTelemetry.Trace;
 using System.Collections.Immutable;
 using System.Diagnostics;
@@ -258,6 +262,50 @@ public class ServiceDefaultsTests
 
         app.Activities.ShouldHaveSingleItem();
     }
+
+    [Fact]
+    public async Task OpenTelemetry_Resource_UsesServiceName_WhenNotOverridden()
+    {
+        await using var app = await CreateApp([]);
+
+        GetServiceNames(app).ShouldBe(["test", "test", "test"]);
+    }
+
+    [Fact]
+    public async Task OpenTelemetry_Resource_OtelServiceName_OverridesServiceName()
+    {
+        await using var app = await CreateApp([
+            new("OTEL_SERVICE_NAME", "from-otel-service-name"),
+        ]);
+
+        GetServiceNames(app).ShouldBe(["from-otel-service-name", "from-otel-service-name", "from-otel-service-name"]);
+    }
+
+    [Fact]
+    public async Task OpenTelemetry_Resource_OtelResourceAttributes_OverrideServiceAttributes()
+    {
+        await using var app = await CreateApp([
+            new("OTEL_RESOURCE_ATTRIBUTES", "service.name=from-resource-attributes,service.namespace=local"),
+        ]);
+
+        foreach (var resource in GetResources(app))
+        {
+            var attributes = resource.Attributes.ToDictionary();
+            attributes["service.name"].ShouldBe("from-resource-attributes");
+            attributes["service.namespace"].ShouldBe("local");
+        }
+    }
+
+    private static IEnumerable<Resource> GetResources(IServiceProvider services)
+    {
+        yield return services.GetRequiredService<TracerProvider>().GetResource();
+        yield return services.GetRequiredService<MeterProvider>().GetResource();
+        yield return services.GetRequiredService<LoggerProvider>().GetResource();
+    }
+
+    private static IEnumerable<string> GetServiceNames(IServiceProvider services)
+        => GetResources(services)
+            .Select(static resource => (string)resource.Attributes.Single(static a => a.Key == "service.name").Value);
 
     private static ActivityContext CreateActivityContext(bool remote, bool sampled)
         => new(
